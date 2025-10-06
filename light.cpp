@@ -8,6 +8,7 @@
 #include "preferencesUtil.h"
 #include "task.h"
 #include "ds3231.h"
+#include <cmath>
 
 int clockColor[3];
 uint16_t mainColor;
@@ -742,6 +743,70 @@ void drawAnim(){
   animTime = millis();
 }
 
+// 每个 FFT bin (i) 对应的 band 索引，-1 表示丢弃
+int bandLookupModel1[SAMPLES/2];
+int bandLookupModel2[SAMPLES/2];
+
+// 32 个 band 的权重常量表
+float bandWeights[32];
+
+// 初始化 lookup 表（只需调用一次）
+void initBandLookup() {
+  for (int i = 0; i < SAMPLES/2; i++) {
+    bandLookupModel1[i] = -1;
+    bandLookupModel2[i] = -1;
+  }
+  for (int b = 0; b < 32; b++) {
+    if( b < 6 )
+    {
+      bandWeights[b] = 1.0f;
+    }
+    else if( b < 21 )
+    {
+      bandWeights[b] = 1.5f;
+    }
+    else
+    {
+      bandWeights[b] = 3.0f;
+    }
+  }
+  // 缩放后的 bandMapModel1（bin 索引大约减半）
+  struct BandMap { int start; int end; int bandIndex; };
+  const BandMap bandMapModel1[] = {
+      {4,5,0},{5,6,1},{6,7,2},{7,7,3},{8,8,4},{9,9,5},{10,10,6},{11,11,7},
+      {12,12,8},{13,13,9},{14,14,10},{15,15,11},{16,16,12},{17,17,13},{18,19,14},{19,20,15},
+      {21,22,16},{22,23,17},{24,25,18},{25,26,19},{27,28,20},{28,29,21},{30,31,22},{31,32,23},
+      {33,34,24},{34,35,25},{36,37,26},{37,38,27},{39,40,28},{40,41,29},{42,43,30},{44,45,31}
+  };
+  const BandMap bandMapModel2[] = {
+      {4,5,15},{5,6,16},{6,7,14},{7,7,17},{8,8,13},{9,9,18},{10,10,12},{11,11,19},
+      {12,12,11},{13,13,20},{14,14,10},{15,15,21},{16,16,9},{17,17,22},{18,19,8},{19,20,23},
+      {21,22,7},{22,23,24},{24,25,6},{25,26,25},{27,28,5},{28,29,26},{30,31,4},{31,32,27},
+      {33,34,3},{34,35,28},{36,37,2},{37,38,29},{39,40,1},{40,41,30},{42,43,0},{44,45,31}
+  };
+
+  // 填充 lookup
+  for (auto &m : bandMapModel1)
+      for (int i = m.start; i <= m.end && i < 256/2; i++)
+          bandLookupModel1[i] = m.bandIndex;
+
+  for (auto &m : bandMapModel2)
+      for (int i = m.start; i <= m.end && i < 256/2; i++)
+          bandLookupModel2[i] = m.bandIndex;
+}
+
+void processBands(const double* vReal, int* bandValues, int rhythmBandsModel) {
+    int* lookup = (rhythmBandsModel == RHYTHM_BANDS_MODEL1) ? bandLookupModel1 : bandLookupModel2;
+
+    for (int i = 2; i < SAMPLES/2; i++) {
+        if (vReal[i] > 10) { //Noise threshold
+            int bandIndex = lookup[i];
+            if (bandIndex >= 0)
+                bandValues[bandIndex] += (int)(vReal[i] * bandWeights[bandIndex]);
+        }
+    }
+}
+
 // 绘制节奏灯页面
 void drawRHYTHM(){
   matrix.clear();
@@ -764,90 +829,14 @@ void drawRHYTHM(){
   FFT.compute(FFT_FORWARD);
   FFT.complexToMagnitude();
   // 解析计算结果
-  
-  if(rhythmBandsModel == RHYTHM_BANDS_MODEL1){ // 左高频，右低频，32个频段
-    for (int i = 2; i < (SAMPLES/2); i++){
-      if (vReal[i] > NOISE) {
-        // Serial.println(vReal[i]);
-        // 去除前面6段低频杂音和一些高频尖叫
-        if (i>6    && i<=9   ) bandValues[0]   += (int)vReal[i];
-        if (i>9    && i<=11  ) bandValues[1]   += (int)vReal[i];
-        if (i>11   && i<=13  ) bandValues[2]   += (int)vReal[i];
-        if (i>13   && i<=15  ) bandValues[3]   += (int)vReal[i];
-        if (i>15   && i<=17  ) bandValues[4]   += (int)vReal[i];
-        if (i>17   && i<=19  ) bandValues[5]   += (int)vReal[i];
-        if (i>19   && i<=21  ) bandValues[6]   += (int)vReal[i];
-        if (i>21   && i<=23  ) bandValues[7]   += (int)vReal[i];
-        if (i>23   && i<=25  ) bandValues[8]   += (int)vReal[i];
-        if (i>25   && i<=27  ) bandValues[9]   += (int)vReal[i];
-        if (i>27   && i<=29  ) bandValues[10]  += (int)vReal[i];
-        if (i>29   && i<=31  ) bandValues[11]  += (int)vReal[i];
-        if (i>31   && i<=33  ) bandValues[12]  += (int)vReal[i];
-        if (i>33   && i<=35  ) bandValues[13]  += (int)vReal[i];
-        if (i>35   && i<=38  ) bandValues[14]  += (int)vReal[i];
-        if (i>38   && i<=41  ) bandValues[15]  += (int)vReal[i];
-        if (i>41   && i<=44  ) bandValues[16]  += (int)vReal[i];
-        if (i>44   && i<=47  ) bandValues[17]  += (int)vReal[i];
-        if (i>47   && i<=50  ) bandValues[18]  += (int)vReal[i];
-        if (i>50   && i<=53  ) bandValues[19]  += (int)vReal[i];
-        if (i>53   && i<=56  ) bandValues[20]  += (int)vReal[i];
-        if (i>56   && i<=59  ) bandValues[21]  += (int)vReal[i];
-        if (i>59   && i<=62  ) bandValues[22]  += (int)vReal[i];
-        if (i>62   && i<=65  ) bandValues[23]  += (int)vReal[i];
-        if (i>65   && i<=68  ) bandValues[24]  += (int)vReal[i];
-        if (i>68   && i<=71  ) bandValues[25]  += (int)vReal[i];
-        if (i>71   && i<=74  ) bandValues[26]  += (int)vReal[i];
-        if (i>74   && i<=77  ) bandValues[27]  += (int)vReal[i];
-        if (i>77   && i<=80  ) bandValues[28]  += (int)vReal[i];
-        if (i>80   && i<=83  ) bandValues[29]  += (int)vReal[i];
-        if (i>83   && i<=87  ) bandValues[30]  += (int)vReal[i];
-        if (i>87   && i<=91  ) bandValues[31]  += (int)vReal[i];
-      }
-    }
-  }else{
-     for (int i = 2; i < (SAMPLES/2); i++){
-      if (vReal[i] > NOISE) {
-        // Serial.println(vReal[i]);
-        // 去除前面6段低频杂音和一些高频尖叫
-        if (i>6    && i<=9   ) bandValues[15]   += (int)vReal[i];
-        if (i>9    && i<=11  ) bandValues[16]   += (int)vReal[i];
-        if (i>11   && i<=13  ) bandValues[14]   += (int)vReal[i];
-        if (i>13   && i<=15  ) bandValues[17]   += (int)vReal[i];
-        if (i>15   && i<=17  ) bandValues[13]   += (int)vReal[i];
-        if (i>17   && i<=19  ) bandValues[18]   += (int)vReal[i];
-        if (i>19   && i<=21  ) bandValues[12]   += (int)vReal[i];
-        if (i>21   && i<=23  ) bandValues[19]   += (int)vReal[i];
-        if (i>23   && i<=25  ) bandValues[11]   += (int)vReal[i];
-        if (i>25   && i<=27  ) bandValues[20]   += (int)vReal[i];
-        if (i>27   && i<=29  ) bandValues[10]  += (int)vReal[i];
-        if (i>29   && i<=31  ) bandValues[21]  += (int)vReal[i];
-        if (i>31   && i<=33  ) bandValues[9]  += (int)vReal[i];
-        if (i>33   && i<=35  ) bandValues[22]  += (int)vReal[i];
-        if (i>35   && i<=38  ) bandValues[8]  += (int)vReal[i];
-        if (i>38   && i<=41  ) bandValues[23]  += (int)vReal[i];
-        if (i>41   && i<=44  ) bandValues[7]  += (int)vReal[i];
-        if (i>44   && i<=47  ) bandValues[24]  += (int)vReal[i];
-        if (i>47   && i<=50  ) bandValues[6]  += (int)vReal[i];
-        if (i>50   && i<=53  ) bandValues[25]  += (int)vReal[i];
-        if (i>53   && i<=56  ) bandValues[5]  += (int)vReal[i];
-        if (i>56   && i<=59  ) bandValues[26]  += (int)vReal[i];
-        if (i>59   && i<=62  ) bandValues[4]  += (int)vReal[i];
-        if (i>62   && i<=65  ) bandValues[27]  += (int)vReal[i];
-        if (i>65   && i<=68  ) bandValues[3]  += (int)vReal[i];
-        if (i>68   && i<=71  ) bandValues[28]  += (int)vReal[i];
-        if (i>71   && i<=74  ) bandValues[2]  += (int)vReal[i];
-        if (i>74   && i<=77  ) bandValues[29]  += (int)vReal[i];
-        if (i>77   && i<=80  ) bandValues[1]  += (int)vReal[i];
-        if (i>80   && i<=83  ) bandValues[30]  += (int)vReal[i];
-        if (i>83   && i<=87  ) bandValues[0]  += (int)vReal[i];
-        if (i>87   && i<=91  ) bandValues[31]  += (int)vReal[i];
-      }
-    }
+  static bool bandlookupInit = false;
+  if(!bandlookupInit)
+  {
+    initBandLookup();
+    bandlookupInit = true;
   }
 
-
-
-
+  processBands(vReal, bandValues, rhythmBandsModel);
 
   // 寻找bandValues最大值并根据最大值计算倍率
   maxBandValue = 0;
@@ -863,7 +852,7 @@ void drawRHYTHM(){
   }
   
   // 将FFT数据处理为条形高度
-  int color = 360;
+  int color = 0;
   int r, g, b;
   for (byte band = 0; band < NUM_BANDS; band++) {
     // 根据倍率缩放条形图高度
